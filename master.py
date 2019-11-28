@@ -18,6 +18,26 @@ except ImportError:
 else:
     __to_source = astor.to_source
 
+FIELD = dict.fromkeys((
+    'bases',
+    'body',
+    'comparators',
+    'decorator_list',
+    'dims',
+    'elts',
+    'finalbody',
+    'generators',
+    'handlers',
+    'keys',
+    'keywords',
+    'names',
+    'ops',
+    'orelse',
+    'targets',
+    'type_ignores',
+    'values'
+), "[]")
+ 
 def set_internal(obj, attr, value):
     globals()[f"__ast__original{attr}"] = getattr(obj, attr)
     setattr(obj, attr, value)
@@ -40,11 +60,8 @@ def __ast__eq__(self, other):
         return True
 
 def __ast__init__(self, *args, **kwargs):
-    def find_default(field):
-        return None
-
     def generate_arguments():
-        return ", ".join(f'{field}={find_default(field)}' for field in self._fields)
+        return ", ".join(f'{field}={FIELD.get(field)}' for field in self._fields)
     
     signature = inspect._signature_fromstr(inspect.Signature, self, f"({generate_arguments()})")
     arguments = signature.bind(*args, **kwargs)
