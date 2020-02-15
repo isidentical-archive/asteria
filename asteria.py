@@ -1,10 +1,19 @@
 import ast
+import atexit
+import code
 import ctypes
 import functools
 import inspect
 import itertools
+import readline
 import symtable
+import sys
 import weakref
+from collections import defaultdict
+from pathlib import Path
+
+HISTORY_FILE = Path("~/.asteria-history").expanduser()
+AST_CACHE_INDEX = defaultdict(dict)
 
 try:
     import astpretty
@@ -20,28 +29,22 @@ except ImportError:
 else:
     __to_source = astor.to_source
 
-FIELD = dict.fromkeys(
-    (
-        "bases",
-        "body",
-        "comparators",
-        "decorator_list",
-        "dims",
-        "elts",
-        "finalbody",
-        "generators",
-        "handlers",
-        "keys",
-        "keywords",
-        "names",
-        "ops",
-        "orelse",
-        "targets",
-        "type_ignores",
-        "values",
-    ),
-    "[]",
-)
+
+def hash_cache(func):
+    @functools.wraps(func)
+    def wrapper(self, *args, **kwargs):
+        hashid = hash(self)
+        caches = AST_CACHE_INDEX[func.__name__]
+        if hashid in caches:
+            return AST_CACHE_INDEX[func.__name__][hashid]
+        result = func(self, *args, **kwargs)
+        caches[hashid] = result
+        return result
+
+    return wrapper
+
+
+__to_source = hash_cache(__to_source)
 
 
 def set_method(origin):
@@ -63,13 +66,15 @@ def set_method(origin):
     return wrapper
 
 
+def asdl_find_default(node_type, field):
+    return None
+
+
 def require_parents(func):
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
         if not hasattr(self, "parent"):
-            raise ValueError(
-                "Tree should be parentized before a until_parented_by action happended!"
-            )
+            raise ValueError("This helper requires a parentized tree.")
         return func(self, *args, **kwargs)
 
     return wrapper
@@ -102,7 +107,8 @@ def __ast__eq__(self, other):
 def __init__(self, *args, **kwargs):
     def generate_arguments():
         return ", ".join(
-            f"{field}={FIELD.get(field)}" for field in self._fields
+            f"{field}={asdl_find_default(type(self), field)}"
+            for field in self._fields
         )
 
     signature = inspect._signature_fromstr(
@@ -123,20 +129,16 @@ def __ast__compile(self, mode=None, **kwargs):
     if mode is None:
         mode = "eval" if isinstance(self, ast.expr) else "exec"
 
-    return compile(self, filename="<NO_FILE>", mode=mode, **kwargs)
+    return compile(self, filename="<ASTERIA>", mode=mode, **kwargs)
 
 
 @set_method(ast.AST)
+@hash_cache
 def __ast__to_source(self, strip=True):
     source = __to_source(self)
     if strip:
         source = source.strip()
     return source
-
-
-@set_method(ast.AST)
-def __ast__show_source(self, **kwargs):
-    print(self.to_source())
 
 
 @set_method(ast.AST)
@@ -161,7 +163,7 @@ def __ast__until_parented_by(self, node_type, strict=False):
         except AttributeError as exc:
             if strict:
                 raise ValueError(
-                    f"Parentized tree finished before reaching specified node!"
+                    f"Parentized tree finished before reaching to the specified node!"
                 ) from exc
             else:
                 return
@@ -171,9 +173,37 @@ def __ast__until_parented_by(self, node_type, strict=False):
 
 @set_method(ast.Module)
 def __module__add_global(self, node):
-    self.body.insert(node, 0)
+    self.body.insert(0, node)
 
 
 @set_method(ast.Module)
 def __module__get_symbol_table(self, mode="exec", **kwargs):
     return symtable.symtable(self.to_source(), filename="", compile_type=mode)
+
+
+class AsteriaConsole(code.InteractiveConsole):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.init_history()
+
+    def init_history(self):
+        readline.parse_and_bind("tab: complete")
+        if hasattr(readline, "read_history_file"):
+            try:
+                readline.read_history_file(HISTORY_FILE)
+            except FileNotFoundError:
+                pass
+            atexit.register(self.save_history)
+
+    def save_history(self):
+        readline.set_history_length(1000)
+        readline.write_history_file(HISTORY_FILE)
+
+
+def main(argv=None):
+    console = AsteriaConsole(locals=globals())
+    console.interact()
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
