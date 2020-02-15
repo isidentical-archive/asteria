@@ -5,15 +5,17 @@ import ctypes
 import functools
 import inspect
 import itertools
+import re
 import readline
 import symtable
-import sys
 import weakref
 from collections import defaultdict
 from pathlib import Path
 
 HISTORY_FILE = Path("~/.asteria-history").expanduser()
 AST_CACHE_INDEX = defaultdict(dict)
+ASDL_FIELD_SPEC = Path(__file__).parent / "asdl.txt"
+ASDL_FIELD_PATTERN = re.compile(r"(\w*)\((.*?)\)")
 
 try:
     import astpretty
@@ -66,8 +68,29 @@ def set_method(origin):
     return wrapper
 
 
+@functools.lru_cache
+def asdl_parse():
+    nodes = ASDL_FIELD_SPEC.read_text().splitlines()
+    fields = defaultdict(dict)
+    for node in nodes:
+        node, declarations = ASDL_FIELD_PATTERN.match(node).groups()
+        node = getattr(ast, node)
+        for declaration in declarations.split(", "):
+            spec, field = declaration.split(" ")
+            if spec[-1] == "*":
+                fields[node][field] = "[]"
+            elif spec[-1] == "?":
+                fields[node][field] = "None"
+            else:
+                fields[node][field] = None
+    return fields
+
+
 def asdl_find_default(node_type, field):
-    return None
+    fields = asdl_parse().get(node_type)
+    if fields is None or field not in fields:
+        return None
+    return fields[field]
 
 
 def require_parents(func):
@@ -198,12 +221,3 @@ class AsteriaConsole(code.InteractiveConsole):
     def save_history(self):
         readline.set_history_length(1000)
         readline.write_history_file(HISTORY_FILE)
-
-
-def main(argv=None):
-    console = AsteriaConsole(locals=globals())
-    console.interact()
-
-
-if __name__ == "__main__":
-    main(sys.argv[1:])

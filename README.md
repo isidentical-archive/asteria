@@ -2,7 +2,7 @@
 Missing AST features
 
 ## Features
-- Repr implementation to every node
+- Repr implementation to every node (uses `astpretty` if it is available, if not fall backs to the `ast.dump`)
 - AST Comparisons with other nodes
 - Custom initializer with finding default values according to ASDL spec
 - Shortcuts for `fix_missing_locations`, `compile` (e.g `ast.parse("2+2").compile()`)
